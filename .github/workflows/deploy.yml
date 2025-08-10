@@ -12,7 +12,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: aws-keys   # <-- so env secrets/variables are available
+    environment: aws-keys  # uses your Environment (vars + secrets)
 
     steps:
       - name: Checkout
@@ -21,8 +21,8 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.ROLE_ARN }}   # env SECRET
-          aws-region: ${{ vars.AWS_REGION }}        # env VARIABLE
+          role-to-assume: ${{ secrets.ROLE_ARN }}   # <-- SECRET
+          aws-region: ${{ vars.AWS_REGION }}        # <-- VAR
 
       - name: Login to Amazon ECR
         id: ecr
@@ -44,7 +44,7 @@ jobs:
         with:
           host: ${{ vars.EC2_HOST }}
           username: ${{ vars.EC2_USER }}
-          key: ${{ vars.EC2_SSH_KEY }}     # env SECRET
+          key: ${{ secrets.EC2_SSH_KEY }}           # <-- SECRET
           script: |
             set -euo pipefail
             REGION=${{ vars.AWS_REGION }}
@@ -52,16 +52,23 @@ jobs:
             REPO=${{ vars.ECR_REPOSITORY }}
             IMAGE="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/$REPO:latest"
 
+            # ensure docker is running
+            sudo systemctl start docker
+
+            # ECR login (note sudo on docker)
             aws ecr get-login-password --region "$REGION" \
-              | docker login --username AWS --password-stdin "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
+              | sudo docker login --username AWS --password-stdin "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 
             sudo mkdir -p /srv/app
-            docker pull "$IMAGE"
-            docker rm -f "$REPO" || true
-            docker run -d --name "$REPO" \
+            # create a default env file if it doesn't exist
+            sudo bash -lc '[[ -f /srv/app/.env ]] || echo -e "NODE_ENV=production\nPORT=3000" > /srv/app/.env'
+
+            sudo docker pull "$IMAGE"
+            sudo docker rm -f "$REPO" || true
+            sudo docker run -d --name "$REPO" \
               --restart unless-stopped \
               --env-file /srv/app/.env \
               -p 80:3000 \
               "$IMAGE"
 
-            docker image prune -f
+            sudo docker image prune -f
